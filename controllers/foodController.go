@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"golang-restaurant-management/database"
 	"golang-restaurant-management/model"
+	"math"
 	"net/http"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var validate = validator.New()
@@ -22,7 +24,7 @@ var menuCollection *mongo.Collection =database.OpenCollection(database.Client,"m
 
 func GetFoods() gin.HandlerFunc{
 	return func(c *gin.Context){
-
+		
 	}
 }
 
@@ -61,8 +63,8 @@ func CreateFood() gin.HandlerFunc{
 			return
 		}
 	
-		food.Created_at,_ = time.Parse(time.RFC3339, time.Now()).Format(time.RFC3339)
-		food.Updated_at,_ = time.Parse(time.RFC3339, time.Now()).Format(time.RFC3339)
+		food.Created_at,_ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		food.Updated_at,_ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 		food.ID =primitive.NewObjectID()
 		food.Food_id=food.ID.Hex()
 		var num = toFixed(*food.Price,2)
@@ -80,15 +82,59 @@ func CreateFood() gin.HandlerFunc{
 }
 
 func UpdateFood() gin.HandlerFunc{
-	return func(ctx *gin.Context) {
+	return func(c *gin.Context) {
+		var ctx,cancel=context.WithTimeout(context.Background(),100*time.Second)
+		defer cancel()
+		var newFood model.Food
+		
+		if err:=c.Bind(&newFood);err!=nil{
+			c.JSON(http.StatusBadRequest,gin.H{"error":err.Error()})
+			return
+		}
 
+		var updateObj primitive.D
+
+		if newFood.Name!=nil{
+			updateObj=append(updateObj, bson.E{"name",newFood.Name})
+		}
+		if newFood.Price!=nil{
+			updateObj=append(updateObj, bson.E{"price",newFood.Price})
+		}
+		if newFood.Food_image!=nil{
+			updateObj=append(updateObj, bson.E{"food_image",newFood.Food_image})
+		}
+		if newFood.Menu_id!=nil{
+			fetchError:=menuCollection.FindOne(ctx,bson.M{"menu_id":newFood.Menu_id})
+			if fetchError!=nil{
+				msg:=fmt.Sprintf("Menu is not found")
+				c.JSON(http.StatusBadRequest,gin.H{"error":msg})
+			}
+		}
+		newFood.Updated_at,_ =time.Parse(time.RFC3339,time.Now().Format(time.RFC3339))
+		newFood.Created_at,_ =time.Parse(time.RFC3339,time.Now().Format(time.RFC3339))
+		updateObj= append(updateObj, bson.E{"updated_at",newFood.Updated_at})
+		updateObj= append(updateObj, bson.E{"created_at",newFood.Created_at})
+		filter:=bson.M{"food_id":newFood.Food_id}
+		upsert:=true
+		opt :=options.UpdateOptions{
+			Upsert: &upsert,
+		}
+
+		result,err:=foodCollection.UpdateOne(ctx,filter,bson.D{{"$set",updateObj}},&opt,)
+		if err!=nil{
+			errorMessage:="food is not updated"
+			c.JSON(http.StatusInternalServerError,gin.H{"error":errorMessage})
+			return
+		}
+		c.JSON(http.StatusOK,result)
 	}
 }
 
 func round(num float64) int {
-
+return int(num+math.Copysign(0.5,num))
 }
 
 func toFixed(num float64,precision int) float64{
-
+	output:=math.Pow(10,float64(precision))
+	return float64(round(num*output))/output
 }
